@@ -19,4 +19,5 @@ conda init --all
 
 ### Setup conda env
 
-Install environment by doing: `conda create --name cuVStesting --file requirements.txt`
+- Give permission to script: `chmox +x ./setup_environment.sh`
+- Run it: `./setup_environment.sh`
