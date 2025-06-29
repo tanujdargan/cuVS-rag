@@ -1,0 +1,15 @@
+# PyPI packages
+torch==2.7.1
+transformers==4.52.4
+sentence-transformers==4.1.0
+tokenizers==0.21.1
+safetensors==0.5.3
+huggingface-hub==0.33.0
+hf-xet==1.1.5
+cuvs-cu12==25.6.0
+cuda-python==12.9.0
+cuda-bindings==12.9.0
+rmm-cu12==25.6.0
+pylibraft-cu12==25.6.0
+rapids-logger==0.1.1
+triton==3.3.1 

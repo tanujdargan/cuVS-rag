@@ -1,0 +1,14 @@
+# Conda packages only
+numpy=2.1.3
+pandas=2.2.3
+scikit-learn=1.6.1
+scipy=1.15.3
+matplotlib=3.10.0
+seaborn=0.13.2
+jupyter=1.1.1
+notebook=7.3.2
+ipykernel=6.29.5
+ipython=8.30.0
+requests=2.32.3
+tqdm=4.67.1
+python=3.13 
