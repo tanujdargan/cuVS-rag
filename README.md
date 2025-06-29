@@ -19,5 +19,5 @@ conda init --all
 
 ### Setup conda env
 
-- Give permission to script: `chmox +x ./setup_environment.sh`
+- Give permission to script: `chmod +x ./setup_environment.sh`
 - Run it: `./setup_environment.sh`
