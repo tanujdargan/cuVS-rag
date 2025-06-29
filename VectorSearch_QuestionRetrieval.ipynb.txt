@@ -1,0 +1,800 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "f5499b54",
+   "metadata": {},
+   "source": [
+    "\n",
+    "# Similar Questions Retrieval\n",
+    "\n",
+    "This notebook is inspired by the [similar search example of Sentence-Transformers](https://www.sbert.net/examples/applications/semantic-search/README.html#similar-questions-retrieval), and adapted to support [cuVS ANN](https://github.com/rapidsai/cuvs) algorithm.\n",
+    "\n",
+    "The model was pre-trained on the [Natural Questions dataset](https://ai.google.com/research/NaturalQuestions). It consists of about 100k real Google search queries, together with an annotated passage from Wikipedia that provides the answer. It is an example of an asymmetric search task. As corpus, we use the smaller [Simple English Wikipedia](http://sbert.net/datasets/simplewiki-2020-11-01.jsonl.gz) so that it fits easily into memory.\n",
+    "\n",
+    "The steps to install the latest stable `cuvs` python package are available in the [documentation](https://docs.rapids.ai/api/cuvs/nightly/build/)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "e8d55ede",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:19.598088Z",
+     "iopub.status.busy": "2024-10-09T13:41:19.597987Z",
+     "iopub.status.idle": "2024-10-09T13:41:24.994680Z",
+     "shell.execute_reply": "2024-10-09T13:41:24.994209Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Looking in indexes: https://pypi.org/simple, https://pypi.ngc.nvidia.com\r\n",
+      "Requirement already satisfied: sentence_transformers in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (3.0.1)\r\n",
+      "Requirement already satisfied: torch in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (2.3.1)\r\n",
+      "Requirement already satisfied: transformers<5.0.0,>=4.34.0 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sentence_transformers) (4.42.4)\r\n",
+      "Requirement already satisfied: tqdm in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sentence_transformers) (4.66.4)\r\n",
+      "Requirement already satisfied: numpy in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sentence_transformers) (1.26.4)\r\n",
+      "Requirement already satisfied: scikit-learn in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sentence_transformers) (1.5.1)\r\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Requirement already satisfied: scipy in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sentence_transformers) (1.14.0)\r\n",
+      "Requirement already satisfied: huggingface-hub>=0.15.1 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sentence_transformers) (0.24.0)\r\n",
+      "Requirement already satisfied: Pillow in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sentence_transformers) (10.4.0)\r\n",
+      "Requirement already satisfied: filelock in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (3.15.4)\r\n",
+      "Requirement already satisfied: typing-extensions>=4.8.0 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (4.12.2)\r\n",
+      "Requirement already satisfied: sympy in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (1.13.1)\r\n",
+      "Requirement already satisfied: networkx in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (3.3)\r\n",
+      "Requirement already satisfied: jinja2 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (3.1.4)\r\n",
+      "Requirement already satisfied: fsspec in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (2024.6.1)\r\n",
+      "Requirement already satisfied: nvidia-cuda-nvrtc-cu12==12.1.105 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (12.1.105)\r\n",
+      "Requirement already satisfied: nvidia-cuda-runtime-cu12==12.1.105 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (12.1.105)\r\n",
+      "Requirement already satisfied: nvidia-cuda-cupti-cu12==12.1.105 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (12.1.105)\r\n",
+      "Requirement already satisfied: nvidia-cudnn-cu12==8.9.2.26 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (8.9.2.26)\r\n",
+      "Requirement already satisfied: nvidia-cublas-cu12==12.1.3.1 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (12.1.3.1)\r\n",
+      "Requirement already satisfied: nvidia-cufft-cu12==11.0.2.54 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (11.0.2.54)\r\n",
+      "Requirement already satisfied: nvidia-curand-cu12==10.3.2.106 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (10.3.2.106)\r\n",
+      "Requirement already satisfied: nvidia-cusolver-cu12==11.4.5.107 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (11.4.5.107)\r\n",
+      "Requirement already satisfied: nvidia-cusparse-cu12==12.1.0.106 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (12.1.0.106)\r\n",
+      "Requirement already satisfied: nvidia-nccl-cu12==2.20.5 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (2.20.5)\r\n",
+      "Requirement already satisfied: nvidia-nvtx-cu12==12.1.105 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (12.1.105)\r\n",
+      "Requirement already satisfied: triton==2.3.1 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from torch) (2.3.1)\r\n",
+      "Requirement already satisfied: nvidia-nvjitlink-cu12 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from nvidia-cusolver-cu12==11.4.5.107->torch) (12.5.82)\r\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Requirement already satisfied: packaging>=20.9 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from huggingface-hub>=0.15.1->sentence_transformers) (24.1)\r\n",
+      "Requirement already satisfied: pyyaml>=5.1 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from huggingface-hub>=0.15.1->sentence_transformers) (6.0.1)\r\n",
+      "Requirement already satisfied: requests in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from huggingface-hub>=0.15.1->sentence_transformers) (2.32.3)\r\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Requirement already satisfied: regex!=2019.12.17 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from transformers<5.0.0,>=4.34.0->sentence_transformers) (2024.5.15)\r\n",
+      "Requirement already satisfied: safetensors>=0.4.1 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from transformers<5.0.0,>=4.34.0->sentence_transformers) (0.4.3)\r\n",
+      "Requirement already satisfied: tokenizers<0.20,>=0.19 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from transformers<5.0.0,>=4.34.0->sentence_transformers) (0.19.1)\r\n",
+      "Requirement already satisfied: MarkupSafe>=2.0 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from jinja2->torch) (2.1.5)\r\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Requirement already satisfied: joblib>=1.2.0 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from scikit-learn->sentence_transformers) (1.4.2)\r\n",
+      "Requirement already satisfied: threadpoolctl>=3.1.0 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from scikit-learn->sentence_transformers) (3.5.0)\r\n",
+      "Requirement already satisfied: mpmath<1.4,>=1.1.0 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from sympy->torch) (1.3.0)\r\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Requirement already satisfied: charset-normalizer<4,>=2 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from requests->huggingface-hub>=0.15.1->sentence_transformers) (3.3.2)\r\n",
+      "Requirement already satisfied: idna<4,>=2.5 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from requests->huggingface-hub>=0.15.1->sentence_transformers) (3.7)\r\n",
+      "Requirement already satisfied: urllib3<3,>=1.21.1 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from requests->huggingface-hub>=0.15.1->sentence_transformers) (2.2.2)\r\n",
+      "Requirement already satisfied: certifi>=2017.4.17 in /home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages (from requests->huggingface-hub>=0.15.1->sentence_transformers) (2024.7.4)\r\n"
+     ]
+    }
+   ],
+   "source": [
+    "!pip install sentence_transformers torch\n",
+    "\n",
+    "# Note: if you have a Hopper based GPU, like an H100, use these to install:\n",
+    "# pip install torch --index-url https://download.pytorch.org/whl/cu118\n",
+    "# pip install sentence_transformers"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "eb1e81c3",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:24.997114Z",
+     "iopub.status.busy": "2024-10-09T13:41:24.996859Z",
+     "iopub.status.idle": "2024-10-09T13:41:25.942625Z",
+     "shell.execute_reply": "2024-10-09T13:41:25.942195Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Wed Oct  9 06:41:25 2024       \r\n",
+      "+---------------------------------------------------------------------------------------+\r\n",
+      "| NVIDIA-SMI 535.183.01             Driver Version: 535.183.01   CUDA Version: 12.2     |\r\n",
+      "|-----------------------------------------+----------------------+----------------------+\r\n",
+      "| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |\r\n",
+      "| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |\r\n",
+      "|                                         |                      |               MIG M. |\r\n",
+      "|=========================================+======================+======================|\r\n",
+      "|   0  NVIDIA H100 80GB HBM3          On  | 00000000:1B:00.0 Off |                    0 |\r\n",
+      "| N/A   35C    P0             129W / 700W |    669MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n",
+      "|   1  NVIDIA H100 80GB HBM3          On  | 00000000:43:00.0 Off |                    0 |\r\n",
+      "| N/A   35C    P0             117W / 700W |    527MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "|   2  NVIDIA H100 80GB HBM3          On  | 00000000:52:00.0 Off |                    0 |\r\n",
+      "| N/A   39C    P0             125W / 700W |    527MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n",
+      "|   3  NVIDIA H100 80GB HBM3          On  | 00000000:61:00.0 Off |                    0 |\r\n",
+      "| N/A   38C    P0             119W / 700W |    527MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n",
+      "|   4  NVIDIA H100 80GB HBM3          On  | 00000000:9D:00.0 Off |                    0 |\r\n",
+      "| N/A   37C    P0             132W / 700W |    527MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "|   5  NVIDIA H100 80GB HBM3          On  | 00000000:C3:00.0 Off |                    0 |\r\n",
+      "| N/A   35C    P0             122W / 700W |    527MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n",
+      "|   6  NVIDIA H100 80GB HBM3          On  | 00000000:D1:00.0 Off |                    0 |\r\n",
+      "| N/A   39C    P0             123W / 700W |    527MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n",
+      "|   7  NVIDIA H100 80GB HBM3          On  | 00000000:DF:00.0 Off |                    0 |\r\n",
+      "| N/A   41C    P0             122W / 700W |  75432MiB / 81559MiB |      0%      Default |\r\n",
+      "|                                         |                      |             Disabled |\r\n",
+      "+-----------------------------------------+----------------------+----------------------+\r\n",
+      "                                                                                         \r\n",
+      "+---------------------------------------------------------------------------------------+\r\n",
+      "| Processes:                                                                            |\r\n",
+      "|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |\r\n",
+      "|        ID   ID                                                             Usage      |\r\n",
+      "|=======================================================================================|\r\n",
+      "|    0   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      540MiB |\r\n",
+      "|    1   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      520MiB |\r\n",
+      "|    2   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      520MiB |\r\n",
+      "|    3   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      520MiB |\r\n",
+      "|    4   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      520MiB |\r\n",
+      "|    5   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      520MiB |\r\n",
+      "|    6   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      520MiB |\r\n",
+      "|    7   N/A  N/A    507232      C   ...forge3/envs/rapids-24.10/bin/python      520MiB |\r\n",
+      "|    7   N/A  N/A    919692      C   python                                    74900MiB |\r\n",
+      "+---------------------------------------------------------------------------------------+\r\n"
+     ]
+    }
+   ],
+   "source": [
+    "!nvidia-smi"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "ee4c5cc0",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:25.945177Z",
+     "iopub.status.busy": "2024-10-09T13:41:25.944958Z",
+     "iopub.status.idle": "2024-10-09T13:41:42.999692Z",
+     "shell.execute_reply": "2024-10-09T13:41:42.999263Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "/home/nfs/mide/miniconda3/envs/base_cuvs/lib/python3.11/site-packages/sentence_transformers/cross_encoder/CrossEncoder.py:11: TqdmExperimentalWarning: Using `tqdm.autonotebook.tqdm` in notebook mode. Use `tqdm.tqdm` instead to force console mode (e.g. in jupyter console)\n",
+      "  from tqdm.autonotebook import tqdm, trange\n"
+     ]
+    }
+   ],
+   "source": [
+    "import json\n",
+    "from sentence_transformers import SentenceTransformer, CrossEncoder, util\n",
+    "import time\n",
+    "import gzip\n",
+    "import os\n",
+    "import torch\n",
+    "import pylibraft\n",
+    "from cuvs.neighbors import ivf_flat, ivf_pq\n",
+    "pylibraft.config.set_output_as(lambda device_ndarray: device_ndarray.copy_to_host())\n",
+    "\n",
+    "if not torch.cuda.is_available():\n",
+    "  print(\"Warning: No GPU found. Please add GPU to your notebook\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "0a1a6307",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:43.002028Z",
+     "iopub.status.busy": "2024-10-09T13:41:43.001832Z",
+     "iopub.status.idle": "2024-10-09T13:41:48.684877Z",
+     "shell.execute_reply": "2024-10-09T13:41:48.684375Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Passages: 509663\n"
+     ]
+    }
+   ],
+   "source": [
+    "# We use the Bi-Encoder to encode all passages, so that we can use it with semantic search\n",
+    "model_name = 'nq-distilbert-base-v1'\n",
+    "bi_encoder = SentenceTransformer(model_name)\n",
+    "\n",
+    "# As dataset, we use Simple English Wikipedia. Compared to the full English wikipedia, it has only\n",
+    "# about 170k articles. We split these articles into paragraphs and encode them with the bi-encoder\n",
+    "\n",
+    "wikipedia_filepath = 'data/simplewiki-2020-11-01.jsonl.gz'\n",
+    "\n",
+    "if not os.path.exists(wikipedia_filepath):\n",
+    "    util.http_get('http://sbert.net/datasets/simplewiki-2020-11-01.jsonl.gz', wikipedia_filepath)\n",
+    "\n",
+    "passages = []\n",
+    "with gzip.open(wikipedia_filepath, 'rt', encoding='utf8') as fIn:\n",
+    "    for line in fIn:\n",
+    "        data = json.loads(line.strip())\n",
+    "        for paragraph in data['paragraphs']:\n",
+    "            # We encode the passages as [title, text]\n",
+    "            passages.append([data['title'], paragraph])\n",
+    "\n",
+    "# If you like, you can also limit the number of passages you want to use\n",
+    "print(\"Passages:\", len(passages))\n",
+    "\n",
+    "# To speed things up, pre-computed embeddings are downloaded.\n",
+    "# The provided file encoded the passages with the model 'nq-distilbert-base-v1'\n",
+    "if model_name == 'nq-distilbert-base-v1':\n",
+    "    embeddings_filepath = 'simplewiki-2020-11-01-nq-distilbert-base-v1.pt'\n",
+    "    if not os.path.exists(embeddings_filepath):\n",
+    "        util.http_get('http://sbert.net/datasets/simplewiki-2020-11-01-nq-distilbert-base-v1.pt', embeddings_filepath)\n",
+    "\n",
+    "    corpus_embeddings = torch.load(embeddings_filepath)\n",
+    "    corpus_embeddings = corpus_embeddings.float()  # Convert embedding file to float\n",
+    "    if torch.cuda.is_available():\n",
+    "        corpus_embeddings = corpus_embeddings.to('cuda')\n",
+    "else:  # Here, we compute the corpus_embeddings from scratch (which can take a while depending on the GPU)\n",
+    "    corpus_embeddings = bi_encoder.encode(passages, convert_to_tensor=True, show_progress_bar=True)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1f4e9b9d",
+   "metadata": {},
+   "source": [
+    "# Vector Search using RAPIDS cuVS\n",
+    "Now that our embeddings are ready to be indexed and that the model has been loaded, we can use RAPIDS cuVS to do our vector search.\n",
+    "\n",
+    "This is done in two step: First we build the index, then we search it.\n",
+    "With `cuvs` all you need is those four Python lines:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "ad90b4be",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:48.687235Z",
+     "iopub.status.busy": "2024-10-09T13:41:48.687035Z",
+     "iopub.status.idle": "2024-10-09T13:41:51.273868Z",
+     "shell.execute_reply": "2024-10-09T13:41:51.273390Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "using ivf_pq::index_params nrows 509663, dim 768, n_lits 150, pq_dim 96\n",
+      "CPU times: user 1.13 s, sys: 1.33 s, total: 2.45 s\n",
+      "Wall time: 2.58 s\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "params = ivf_pq.IndexParams(n_lists=150, pq_dim=96)\n",
+    "pq_index = ivf_pq.build(params, corpus_embeddings)\n",
+    "search_params = ivf_pq.SearchParams()\n",
+    "\n",
+    "def search_cuvs_pq(query, top_k = 5):\n",
+    "    # Encode the query using the bi-encoder and find potentially relevant passages\n",
+    "    question_embedding = bi_encoder.encode(query, convert_to_tensor=True)\n",
+    "\n",
+    "    start_time = time.time()\n",
+    "    hits = ivf_pq.search(search_params, pq_index, question_embedding[None], top_k)\n",
+    "    end_time = time.time()\n",
+    "\n",
+    "    # Output of top-k hits\n",
+    "    print(\"Input question:\", query)\n",
+    "    print(\"Results (after {:.3f} seconds):\".format(end_time - start_time))\n",
+    "    for k in range(top_k):\n",
+    "        print(\"\\t{:.3f}\\t{}\".format(hits[0][0, k], passages[hits[1][0, k]]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "07935bca",
+   "metadata": {},
+   "source": [
+    "For IVF-PQ we want to reduce the memory footprint while keeping a good accuracy."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "724dcacb",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:51.275716Z",
+     "iopub.status.busy": "2024-10-09T13:41:51.275420Z",
+     "iopub.status.idle": "2024-10-09T13:41:51.278416Z",
+     "shell.execute_reply": "2024-10-09T13:41:51.278046Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "IVF-PQ memory footprint: 373.3 MB\n",
+      "Original dataset: 1493.2 MB\n",
+      "Memory saved: 75.0%\n"
+     ]
+    }
+   ],
+   "source": [
+    "pq_index_mem = params.pq_dim * corpus_embeddings.shape[0] * params.pq_bits\n",
+    "print(\"IVF-PQ memory footprint: {:.1f} MB\".format(pq_index_mem / 2**20))\n",
+    "\n",
+    "original_mem = corpus_embeddings.shape[0] * corpus_embeddings.shape[1] * 4\n",
+    "print(\"Original dataset: {:.1f} MB\".format(original_mem / 2**20))\n",
+    "\n",
+    "print(\"Memory saved: {:.1f}%\".format(100 * (1 - pq_index_mem / original_mem)))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "c27d4715",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:51.279772Z",
+     "iopub.status.busy": "2024-10-09T13:41:51.279517Z",
+     "iopub.status.idle": "2024-10-09T13:41:53.730987Z",
+     "shell.execute_reply": "2024-10-09T13:41:53.730545Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Input question: Who was Grace Hopper?\n",
+      "Results (after 0.101 seconds):\n",
+      "\t191.665\t['Grace Hopper', 'Hopper was born in New York, USA. Hopper graduated from Vassar College in 1928 and Yale University in 1934 with a Ph.D degree in mathematics. She joined the US Navy during the World War II in 1943. She worked on computers in the Navy for 43 years. She then worked in other private industry companies after 1949. She retired from the Navy in 1986 and died on January 1, 1992.']\n",
+      "\t192.103\t['Leona Helmsley', 'Leona Helmsley (July 4, 1920 – August 20, 2007) was an American businesswoman. She was known for having a flamboyant personality. She had a reputation for tyrannical behavior; she was nicknamed the Queen of Mean.']\n",
+      "\t195.736\t['Grace Hopper', 'Grace Murray Hopper (December 9 1906 – January 1 1992) was an American computer scientist and United States Navy officer.']\n",
+      "\t195.999\t['Abbie Hoffman', 'Abbot Howard \"Abbie\" Hoffman (November 30, 1936 – April 12, 1989) was an American social and political activist.']\n",
+      "\t205.759\t['Nellie Bly', 'Elizabeth Cochrane Seaman (born Elizabeth Jane Cochran; May 5, 1864 – January 27, 1922), better known by her pen name Nellie Bly, was an American journalist, novelist and inventor. She was a newspaper reporter, who worked at various jobs for exposing poor working conditions. Nellie Bly, also, fought for women\\'s right and was known for investigative reporting. She best known for her record-breaking trip around the world in 72 days, inspired by the adventure novel \"Around the World in Eighty Days\" by Jules Verne. In the 1880s, she went undercover as a mentally ill patient in a psychiatric hospital for ten days, with the report being made public in a book called \"\"Ten Days in a Mad-House\"\". She was added to the National Women\\'s Hall of Fame in 1998.']\n",
+      "CPU times: user 513 ms, sys: 140 ms, total: 653 ms\n",
+      "Wall time: 2.45 s\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "search_cuvs_pq(query=\"Who was Grace Hopper?\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "bc375518",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:53.732616Z",
+     "iopub.status.busy": "2024-10-09T13:41:53.732324Z",
+     "iopub.status.idle": "2024-10-09T13:41:53.741571Z",
+     "shell.execute_reply": "2024-10-09T13:41:53.741201Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Input question: Who was Alan Turing?\n",
+      "Results (after 0.001 seconds):\n",
+      "\t127.308\t['Alan Turing', 'Alan Mathison Turing OBE FRS (London, 23 June 1912 – Wilmslow, Cheshire, 7 June 1954) was an English mathematician and computer scientist. He was born in Maida Vale, London.']\n",
+      "\t165.324\t['Rolf Noskwith', 'Rolf Noskwith (19 June 1919 – 3 January 2017) was a British businessman. During the Second World War, he worked under Alan Turing as a cryptographer at the British military base Bletchley Park in Milton Keynes, Buckinghamshire.']\n",
+      "\t168.434\t['William Kahan', 'William Morton Kahan (born June 5, 1933) is a Canadian mathematician and computer scientist. He received the Turing Award in 1989 for \"\"his fundamental contributions to numerical analysis\".\" He was named an ACM Fellow in 1994, and added to the National Academy of Engineering in 2005.']\n",
+      "\t171.231\t['Marvin Minsky', \"Marvin Lee Minsky (August 9, 1927 – January 24, 2016) was an American cognitive scientist in the field of artificial intelligence (AI). He was the co-founder of the Massachusetts Institute of Technology's AI laboratory, and author of several texts on AI and philosophy. He won the Turing Award in 1969.\"]\n",
+      "\t179.029\t['Edsger W. Dijkstra', 'Edsger Wybe Dijkstra (May 11, 1930 – August 6, 2002; ) was a Dutch computer scientist. He received the 1972 Turing Award for fundamental contributions to developing programming languages, and was the Schlumberger Centennial Chair of Computer Sciences at The University of Texas at Austin from 1984 until 2000.']\n",
+      "CPU times: user 2.78 ms, sys: 3.82 ms, total: 6.6 ms\n",
+      "Wall time: 6.51 ms\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "search_cuvs_pq(query=\"Who was Alan Turing?\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "ab154181",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:53.742897Z",
+     "iopub.status.busy": "2024-10-09T13:41:53.742624Z",
+     "iopub.status.idle": "2024-10-09T13:41:53.749921Z",
+     "shell.execute_reply": "2024-10-09T13:41:53.749548Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Input question: What is creating tides?\n",
+      "Results (after 0.001 seconds):\n",
+      "\t138.039\t['Tide', \"A tide is the periodic rising and falling of Earth's ocean surface caused mainly by the gravitational pull of the Moon acting on the oceans. Tides cause changes in the depth of marine and estuarine (river mouth) waters. Tides also make oscillating currents known as tidal streams (~'rip tides'). This means that being able to predict the tide is important for coastal navigation. The strip of seashore that is under water at high tide and exposed at low tide, called the intertidal zone, is an important ecological product of ocean tides.\"]\n",
+      "\t174.934\t['Storm surge', 'A storm surge is a sudden rise of water hitting areas close to the coast. Storm surges are usually created by a hurricane or other tropical cyclone. The surge happens because a storm has fast winds and low atmospheric pressure. Water is pushed on shore, and the water level rises. Strong storm surges can flood coastal towns and destroy homes. A storm surge is considered the deadliest part of a hurricane. They kill many people each year.']\n",
+      "\t176.527\t['Tidal energy', \"Many things affect tides. The pull of the Moon is the largest effect, and most of the energy comes from the slowing of the Earth's spin.\"]\n",
+      "\t179.953\t['Tidal force', 'Tidal force is caused by gravity and makes tides happen. This is because the gravitational field changes across the middle of a body (the diameter).']\n",
+      "\t183.768\t['Tsunami', \"A tsunami is a natural disaster which is a series of fast-moving waves in the ocean caused by powerful earthquakes, volcanic eruptions, landslides, or simply an asteroid or a meteor crash inside the ocean. A tsunami has a very long wavelength. It can be hundreds of kilometers long. Usually, a tsunami starts suddenly. The waves travel at a great speed across an ocean with little energy loss. They can remove sand from beaches, destroy trees, toss and drag vehicles, houses and even destroy whole towns. Tsunamis can even be caused when a meteorite strikes the earth's surface, though it is very rare. A tsunami normally occurs in the Pacific Ocean, especially in what is called the ring of fire, but can occur in any large body of water.\"]\n",
+      "CPU times: user 4.74 ms, sys: 103 μs, total: 4.84 ms\n",
+      "Wall time: 4.83 ms\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "search_cuvs_pq(query = \"What is creating tides?\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "2d6017ed",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:53.751133Z",
+     "iopub.status.busy": "2024-10-09T13:41:53.750940Z",
+     "iopub.status.idle": "2024-10-09T13:41:54.137179Z",
+     "shell.execute_reply": "2024-10-09T13:41:54.136789Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "CPU times: user 190 ms, sys: 183 ms, total: 373 ms\n",
+      "Wall time: 383 ms\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "params = ivf_flat.IndexParams(n_lists=150)\n",
+    "flat_index = ivf_flat.build(params, corpus_embeddings)\n",
+    "search_params = ivf_flat.SearchParams()\n",
+    "\n",
+    "def search_cuvs_flat(query, top_k = 5):\n",
+    "    # Encode the query using the bi-encoder and find potentially relevant passages\n",
+    "    question_embedding = bi_encoder.encode(query, convert_to_tensor=True)\n",
+    "    \n",
+    "    start_time = time.time()\n",
+    "    hits = ivf_flat.search(search_params, flat_index, question_embedding[None], top_k)\n",
+    "    end_time = time.time()\n",
+    "\n",
+    "    # Output of top-k hits\n",
+    "    print(\"Input question:\", query)\n",
+    "    print(\"Results (after {:.3f} seconds):\".format(end_time - start_time))\n",
+    "    for k in range(top_k):\n",
+    "        print(\"\\t{:.3f}\\t{}\".format(hits[0][0, k], passages[hits[1][0, k]]))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "f5cfb644",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:54.138504Z",
+     "iopub.status.busy": "2024-10-09T13:41:54.138387Z",
+     "iopub.status.idle": "2024-10-09T13:41:54.170204Z",
+     "shell.execute_reply": "2024-10-09T13:41:54.169818Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Input question: Who was Grace Hopper?\n",
+      "Results (after 0.024 seconds):\n",
+      "\t181.650\t['Grace Hopper', 'Hopper was born in New York, USA. Hopper graduated from Vassar College in 1928 and Yale University in 1934 with a Ph.D degree in mathematics. She joined the US Navy during the World War II in 1943. She worked on computers in the Navy for 43 years. She then worked in other private industry companies after 1949. She retired from the Navy in 1986 and died on January 1, 1992.']\n",
+      "\t192.946\t['Leona Helmsley', 'Leona Helmsley (July 4, 1920 – August 20, 2007) was an American businesswoman. She was known for having a flamboyant personality. She had a reputation for tyrannical behavior; she was nicknamed the Queen of Mean.']\n",
+      "\t194.951\t['Grace Hopper', 'Grace Murray Hopper (December 9 1906 – January 1 1992) was an American computer scientist and United States Navy officer.']\n",
+      "\t202.192\t['Nellie Bly', 'Elizabeth Cochrane Seaman (born Elizabeth Jane Cochran; May 5, 1864 – January 27, 1922), better known by her pen name Nellie Bly, was an American journalist, novelist and inventor. She was a newspaper reporter, who worked at various jobs for exposing poor working conditions. Nellie Bly, also, fought for women\\'s right and was known for investigative reporting. She best known for her record-breaking trip around the world in 72 days, inspired by the adventure novel \"Around the World in Eighty Days\" by Jules Verne. In the 1880s, she went undercover as a mentally ill patient in a psychiatric hospital for ten days, with the report being made public in a book called \"\"Ten Days in a Mad-House\"\". She was added to the National Women\\'s Hall of Fame in 1998.']\n",
+      "\t205.038\t['Abbie Hoffman', 'Abbot Howard \"Abbie\" Hoffman (November 30, 1936 – April 12, 1989) was an American social and political activist.']\n",
+      "CPU times: user 25.7 ms, sys: 4.11 ms, total: 29.8 ms\n",
+      "Wall time: 29.4 ms\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "search_cuvs_flat(query=\"Who was Grace Hopper?\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "id": "b5694d00",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:54.171795Z",
+     "iopub.status.busy": "2024-10-09T13:41:54.171487Z",
+     "iopub.status.idle": "2024-10-09T13:41:54.180018Z",
+     "shell.execute_reply": "2024-10-09T13:41:54.179625Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Input question: Who was Alan Turing?\n",
+      "Results (after 0.001 seconds):\n",
+      "\t106.131\t['Alan Turing', 'Alan Mathison Turing OBE FRS (London, 23 June 1912 – Wilmslow, Cheshire, 7 June 1954) was an English mathematician and computer scientist. He was born in Maida Vale, London.']\n",
+      "\t158.646\t['William Kahan', 'William Morton Kahan (born June 5, 1933) is a Canadian mathematician and computer scientist. He received the Turing Award in 1989 for \"\"his fundamental contributions to numerical analysis\".\" He was named an ACM Fellow in 1994, and added to the National Academy of Engineering in 2005.']\n",
+      "\t165.094\t['Alan Turing', 'A brilliant mathematician and cryptographer Alan was to become the founder of modern-day computer science and artificial intelligence; designing a machine at Bletchley Park to break secret Enigma encrypted messages used by the Nazi German war machine to protect sensitive commercial, diplomatic and military communications during World War 2. Thus, Turing made the single biggest contribution to the Allied victory in the war against Nazi Germany, possibly saving the lives of an estimated 2 million people, through his effort in shortening World War II.']\n",
+      "\t167.321\t['Rolf Noskwith', 'Rolf Noskwith (19 June 1919 – 3 January 2017) was a British businessman. During the Second World War, he worked under Alan Turing as a cryptographer at the British military base Bletchley Park in Milton Keynes, Buckinghamshire.']\n",
+      "\t176.480\t['Marvin Minsky', \"Marvin Lee Minsky (August 9, 1927 – January 24, 2016) was an American cognitive scientist in the field of artificial intelligence (AI). He was the co-founder of the Massachusetts Institute of Technology's AI laboratory, and author of several texts on AI and philosophy. He won the Turing Award in 1969.\"]\n",
+      "CPU times: user 5.91 ms, sys: 0 ns, total: 5.91 ms\n",
+      "Wall time: 5.9 ms\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "search_cuvs_flat(query=\"Who was Alan Turing?\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "id": "fcfc3c5b",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:54.181505Z",
+     "iopub.status.busy": "2024-10-09T13:41:54.181222Z",
+     "iopub.status.idle": "2024-10-09T13:41:54.189530Z",
+     "shell.execute_reply": "2024-10-09T13:41:54.189149Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Input question: What is creating tides?\n",
+      "Results (after 0.001 seconds):\n",
+      "\t94.909\t['Tide', \"A tide is the periodic rising and falling of Earth's ocean surface caused mainly by the gravitational pull of the Moon acting on the oceans. Tides cause changes in the depth of marine and estuarine (river mouth) waters. Tides also make oscillating currents known as tidal streams (~'rip tides'). This means that being able to predict the tide is important for coastal navigation. The strip of seashore that is under water at high tide and exposed at low tide, called the intertidal zone, is an important ecological product of ocean tides.\"]\n",
+      "\t159.539\t['Tidal energy', \"Many things affect tides. The pull of the Moon is the largest effect, and most of the energy comes from the slowing of the Earth's spin.\"]\n",
+      "\t159.740\t['Storm surge', 'A storm surge is a sudden rise of water hitting areas close to the coast. Storm surges are usually created by a hurricane or other tropical cyclone. The surge happens because a storm has fast winds and low atmospheric pressure. Water is pushed on shore, and the water level rises. Strong storm surges can flood coastal towns and destroy homes. A storm surge is considered the deadliest part of a hurricane. They kill many people each year.']\n",
+      "\t178.283\t['Sea', 'Wind blowing over the surface of a body of water forms waves. The friction between air and water caused by a gentle breeze on a pond causes ripples to form. A strong blow over the ocean causes larger waves as the moving air pushes against the raised ridges of water. The waves reach their greatest height when the rate at which they travel nearly matches the speed of the wind. The waves form at right angles to the direction from which the wind blows. In open water, if the wind continues to blow, as happens in the Roaring Forties in the southern hemisphere, long, organized masses of water called swell roll across the ocean. If the wind dies down, the wave formation is reduced but waves already formed continue to travel in their original direction until they meet land. Small waves form in small areas of water with islands and other landmasses but large waves form in open stretches of sea where the wind blows steadily and strongly. When waves meet other waves coming from different directions, interference between the two can produce broken, irregular seas.']\n",
+      "\t181.498\t['Tidal force', 'Tidal force is caused by gravity and makes tides happen. This is because the gravitational field changes across the middle of a body (the diameter).']\n",
+      "CPU times: user 2.23 ms, sys: 3.53 ms, total: 5.76 ms\n",
+      "Wall time: 5.71 ms\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "search_cuvs_flat(query = \"What is creating tides?\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a59d7b32-0832-4c3a-864e-aeb2e6e7fe1f",
+   "metadata": {},
+   "source": [
+    "## Using CAGRA: GPU graph-based Vector Search\n",
+    "\n",
+    "CAGRA is a graph-based nearest neighbors implementation with state-of-the art query performance for both small- and large-batch sized vector searches. \n",
+    "\n",
+    "CAGRA follows the same two-step APIs as IVF-FLAT and IVF-PQ in cuVS. First we build the index:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "id": "50df1f43-c580-4019-949a-06bdc7185536",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:54.191058Z",
+     "iopub.status.busy": "2024-10-09T13:41:54.190763Z",
+     "iopub.status.idle": "2024-10-09T13:41:54.192791Z",
+     "shell.execute_reply": "2024-10-09T13:41:54.192433Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "from cuvs.neighbors import cagra"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "id": "091cde52-4652-4230-af2b-75c35357f833",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:41:54.194024Z",
+     "iopub.status.busy": "2024-10-09T13:41:54.193912Z",
+     "iopub.status.idle": "2024-10-09T13:43:04.380530Z",
+     "shell.execute_reply": "2024-10-09T13:43:04.379996Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "using ivf_pq::index_params nrows 509663, dim 768, n_lits 713, pq_dim 192\n",
+      "CPU times: user 23.3 s, sys: 52.2 s, total: 1min 15s\n",
+      "Wall time: 1min 10s\n",
+      "[I] [06:43:03.787417] optimizing graph\n",
+      "[I] [06:43:04.356920] Graph optimized, creating index\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time\n",
+    "params = cagra.IndexParams(intermediate_graph_degree=128, graph_degree=64)\n",
+    "cagra_index = cagra.build(params, corpus_embeddings)\n",
+    "search_params = cagra.SearchParams()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "id": "df229e21-f6b6-4d6c-ad54-2724f8738934",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:43:04.382012Z",
+     "iopub.status.busy": "2024-10-09T13:43:04.381877Z",
+     "iopub.status.idle": "2024-10-09T13:43:04.384994Z",
+     "shell.execute_reply": "2024-10-09T13:43:04.384619Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "def search_cuvs_cagra(query, top_k = 5):\n",
+    "    # Encode the query using the bi-encoder and find potentially relevant passages\n",
+    "    question_embedding = bi_encoder.encode(query, convert_to_tensor=True)\n",
+    "\n",
+    "    start_time = time.time()\n",
+    "    hits = cagra.search(search_params, cagra_index, question_embedding[None], top_k)\n",
+    "    end_time = time.time()\n",
+    "\n",
+    "    # Output of top-k hits\n",
+    "    print(\"Input question:\", query)\n",
+    "    print(\"Results (after {:.3f} seconds):\".format(end_time - start_time))\n",
+    "    for k in range(top_k):\n",
+    "        print(\"\\t{:.3f}\\t{}\".format(hits[0][0, k], passages[hits[1][0, k]]))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "id": "b5e862fd-b7e5-4423-8fbf-36918f02c8f3",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2024-10-09T13:43:04.386042Z",
+     "iopub.status.busy": "2024-10-09T13:43:04.385936Z",
+     "iopub.status.idle": "2024-10-09T13:43:04.396366Z",
+     "shell.execute_reply": "2024-10-09T13:43:04.396001Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Input question: Who was Grace Hopper?\n",
+      "Results (after 0.002 seconds):\n",
+      "\t181.649\t['Grace Hopper', 'Hopper was born in New York, USA. Hopper graduated from Vassar College in 1928 and Yale University in 1934 with a Ph.D degree in mathematics. She joined the US Navy during the World War II in 1943. She worked on computers in the Navy for 43 years. She then worked in other private industry companies after 1949. She retired from the Navy in 1986 and died on January 1, 1992.']\n",
+      "\t192.946\t['Leona Helmsley', 'Leona Helmsley (July 4, 1920 – August 20, 2007) was an American businesswoman. She was known for having a flamboyant personality. She had a reputation for tyrannical behavior; she was nicknamed the Queen of Mean.']\n",
+      "\t194.951\t['Grace Hopper', 'Grace Murray Hopper (December 9 1906 – January 1 1992) was an American computer scientist and United States Navy officer.']\n",
+      "\t202.192\t['Nellie Bly', 'Elizabeth Cochrane Seaman (born Elizabeth Jane Cochran; May 5, 1864 – January 27, 1922), better known by her pen name Nellie Bly, was an American journalist, novelist and inventor. She was a newspaper reporter, who worked at various jobs for exposing poor working conditions. Nellie Bly, also, fought for women\\'s right and was known for investigative reporting. She best known for her record-breaking trip around the world in 72 days, inspired by the adventure novel \"Around the World in Eighty Days\" by Jules Verne. In the 1880s, she went undercover as a mentally ill patient in a psychiatric hospital for ten days, with the report being made public in a book called \"\"Ten Days in a Mad-House\"\". She was added to the National Women\\'s Hall of Fame in 1998.']\n",
+      "\t205.038\t['Abbie Hoffman', 'Abbot Howard \"Abbie\" Hoffman (November 30, 1936 – April 12, 1989) was an American social and political activist.']\n",
+      "CPU times: user 7.86 ms, sys: 0 ns, total: 7.86 ms\n",
+      "Wall time: 8.12 ms\n"
+     ]
+    }
+   ],
+   "source": [
+    "%%time \n",
+    "search_cuvs_cagra(query=\"Who was Grace Hopper?\")"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.11.9"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
